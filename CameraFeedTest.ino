@@ -28,8 +28,8 @@ JPEGDEC jpeg;
 // SoftSPI - note that on some processors this might be *faster* than hardware SPI!
 //Adafruit_ST7796S_kbv tft = Adafruit_ST7796S_kbv(TFT_CS, TFT_DC, MOSI, SCK, TFT_RST, MISO);
 
-#define DISPLAY_WIDTH 480
-#define DISPLAY_HEIGHT 2320
+//#define DISPLAY_WIDTH 480
+//#define DISPLAY_HEIGHT 2320
 
 WiFiMulti wifiMulti;
 BB_SPI_LCD tft;
@@ -44,7 +44,8 @@ int drawMCUs(JPEGDRAW *pDraw)
   iCount = pDraw->iWidth * pDraw->iHeight; // number of pixels to draw in this call
 //  Serial.printf("Draw pos = %d,%d. size = %d x %d\n", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
   tft.setAddrWindow(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
-  tft.pushPixels(pDraw->pPixels, iCount, DRAW_TO_LCD | DRAW_WITH_DMA);
+  //tft.pushPixels(pDraw->pPixels, iCount, DRAW_TO_LCD | DRAW_WITH_DMA);
+  tft.pushPixels(pDraw->pPixels, iCount);
   return 1; // returning true (1) tells JPEGDEC to continue decoding. Returning false (0) would quit decoding immediately.
 } /* drawMCUs() */
 
@@ -57,7 +58,8 @@ void setup() {
   Serial.println();
   Serial.println();
 
-  tft.begin(LCD_ST7796, FLAGS_FLIPX, 40000000, CS_PIN, DC_PIN, RESET_PIN, LED_PIN, MISO_PIN, MOSI_PIN, SCK_PIN);
+  tft.begin(LCD_ST7796, FLAGS_FLIPX, 80000000, CS_PIN, DC_PIN, RESET_PIN, LED_PIN, MISO_PIN, MOSI_PIN, SCK_PIN);
+  tft.setRotation(270);
 
 
   for (uint8_t t = 4; t > 0; t--) {
@@ -124,6 +126,8 @@ void loop() {
     free(imageBuffer); 
     imageBuffer = NULL;
     http.end();
+
+    //while(1);
   }
 }
 
