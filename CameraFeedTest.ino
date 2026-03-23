@@ -6,6 +6,7 @@
 #include <JPEGDEC.h>
 #include "pins_arduino.h"
 #include <bb_spi_lcd.h>
+#include <algorithm> // Required for std::copy
 
 
 
@@ -37,15 +38,25 @@ BB_SPI_LCD tft;
 uint8_t* imageBuffer = NULL;
 size_t imageSize = 0;
 
+const size_t BMP_SIZE = 102400; // sized for 320*320 bmp
+uint16_t *bmpBuffer; 
+size_t bmpSize = 0;
+int bmpIndex = 0;
 
 int drawMCUs(JPEGDRAW *pDraw)
 {
   int iCount;
   iCount = pDraw->iWidth * pDraw->iHeight; // number of pixels to draw in this call
-//  Serial.printf("Draw pos = %d,%d. size = %d x %d\n", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
-  tft.setAddrWindow(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
+  Serial.printf("Draw pos = %d,%d. size = %d x %d\n", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
+  //tft.setAddrWindow(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
   //tft.pushPixels(pDraw->pPixels, iCount, DRAW_TO_LCD | DRAW_WITH_DMA);
-  tft.pushPixels(pDraw->pPixels, iCount);
+  //tft.pushPixels(pDraw->pPixels, iCount);
+
+  // Shove things into BMP buffer
+  memcpy(&bmpBuffer[bmpIndex], pDraw->pPixels, iCount*sizeof(uint16_t)); // TO DO: This is not right,
+  //tft.pushPixels(&bmpBuffer[bmpIndex], iCount);
+  // Update index
+  bmpIndex += iCount;
   return 1; // returning true (1) tells JPEGDEC to continue decoding. Returning false (0) would quit decoding immediately.
 } /* drawMCUs() */
 
@@ -57,6 +68,15 @@ void setup() {
   Serial.println();
   Serial.println();
   Serial.println();
+
+  // PSRAM memory allocation
+  if (psramInit()) {
+    Serial.println("PSRAM Initialized");
+  } 
+  else {
+    Serial.println("PSRAM not available or failed to initialize");
+  }
+  bmpBuffer = (uint16_t*) ps_malloc(BMP_SIZE * sizeof(uint16_t));
 
   tft.begin(LCD_ST7796, FLAGS_FLIPX, 80000000, CS_PIN, DC_PIN, RESET_PIN, LED_PIN, MISO_PIN, MOSI_PIN, SCK_PIN);
   tft.setRotation(270);
@@ -123,8 +143,26 @@ void loop() {
     } else {
       Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
+
+    // Do stuff with bmp buffer
+    Serial.print("Pixel value at index 51360: ");
+    Serial.println(bmpBuffer[51360]);
+
+    // TEST
+    tft.setAddrWindow(0, 0, 320, 320);
+    tft.pushPixels(bmpBuffer, BMP_SIZE);
+    // for (size_t i = 0; i < BMP_SIZE; i++) {
+    // Serial.print(bmpBuffer[i], HEX); // Prints each byte as a hexadecimal value
+    // //Serial.print(" ");           // Adds a space for readability
+    // }
+    // Serial.println();  
+
+    // Free memory
+
     free(imageBuffer); 
     imageBuffer = NULL;
+    
+
     http.end();
 
     //while(1);
@@ -137,6 +175,12 @@ void grabImage(){
     Serial.printf("Image size: %d x %d, orientation: %d, bpp: %d\n", jpeg.getWidth(),
       jpeg.getHeight(), jpeg.getOrientation(), jpeg.getBpp());
     jpeg.setPixelType(RGB565_BIG_ENDIAN); // The SPI LCD wants the 16-bit pixels in little-endian order  
+    
+    bmpIndex = 0;
+    bmpSize = jpeg.getHeight()*jpeg.getWidth();
+    Serial.print("Bitmap Size: ");
+      Serial.println(bmpSize);
+    
 
     jpeg.decode(0,0,0);
     jpeg.close();
