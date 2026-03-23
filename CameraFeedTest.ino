@@ -42,23 +42,29 @@ const size_t BMP_SIZE = 102400; // sized for 320*320 bmp
 uint16_t *bmpBuffer; 
 size_t bmpSize = 0;
 
-
+// Method to make sure jpeg decode chunks get written to buffer in right order. 
 void writeToBuffer(uint16_t *pixels, int x, int y, int width, int height){
-  int numberPixels = width*height;
-  int skipSize = 320 - width;
-  int startAt = (320*y) + x;
-  int index = startAt;
-  int skipIndex = 0;
+  
+  // Chunks are width x Height pixel blobs that don't fit nicely into a linear buffer and may come at us out of order
+  int numberPixels = width*height; // Number of pixels in this chunk
+  int skipSize = jpeg.getWidth() - width; // How many pixels to skip in the buffer at end of each chunk row to get back to starting column
+  int startAt = (jpeg.getWidth()*y) + x; // Where in the buffer to start writing
+  int index = startAt; // Init index
+  int skipIndex = 0; // Keep track of where we are in the chunk row.
+
+  // Debug print
   //Serial.printf("# = %d, skip = %d, start = %d, Draw pos = %d,%d. size = %d x %d\n", numberPixels, skipSize, startAt, x, y, width, height);
+
+  // For every pixel in this chunk...
   for (int i = 0; i < numberPixels; i++) {
-    bmpBuffer[index] = pixels[i];
-    if(skipIndex<width-1){// problem here
+    bmpBuffer[index] = pixels[i]; // Write pixel to puffer
+    if(skipIndex<width-1){ // If we're not at the end of a chunk row, continue on as normal
       index++;
       skipIndex++;
     }
-    else{
+    else{ // If we're at the end of a chunk row...
       index += skipSize+1; // Skip!
-      skipIndex = 0;
+      skipIndex = 0; // Reset chunk row index (as we're starting a new row of the chunk)
     }
   }
 }
@@ -68,15 +74,14 @@ int drawMCUs(JPEGDRAW *pDraw)
   int iCount;
   iCount = pDraw->iWidth * pDraw->iHeight; // number of pixels to draw in this call
   //Serial.printf("Draw pos = %d,%d. size = %d x %d\n", pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
+  
+  // Shove chunks into bitmap buffer
   writeToBuffer(pDraw->pPixels, pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
+  
+  // Debug: write chunks to display directly from jpg decode output
   //tft.setAddrWindow(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight);
   //tft.pushPixels(pDraw->pPixels, iCount, DRAW_TO_LCD | DRAW_WITH_DMA);
   //tft.pushPixels(pDraw->pPixels, iCount);
-
-  // Shove things into BMP buffer
-  //memcpy(&bmpBuffer[bmpIndex], pDraw->pPixels, iCount*sizeof(uint16_t)); // TO DO: This is not right,
-  
-  //tft.pushPixels(&bmpBuffer[bmpIndex], iCount);
 
   return 1; // returning true (1) tells JPEGDEC to continue decoding. Returning false (0) would quit decoding immediately.
 } /* drawMCUs() */
@@ -126,8 +131,8 @@ void loop() {
     HTTPClient http;
 
     //Serial.print("[HTTP] begin...\n");
+
     // configure traged server and url
-    //http.begin("https://www.howsmyssl.com/a/check", ca); //HTTPS
     http.begin("http://192.168.137.163/capture");  //HTTP
 
     //Serial.print("[HTTP] GET...\n");
@@ -144,6 +149,7 @@ void loop() {
         imageSize = http.getSize(); // get payload size
         //Serial.printf("Image size: %d bytes\n", imageSize);
         if (imageSize > 0) {
+
           // Allocate memory for the buffer
           // Use heap_caps_malloc if using ESP-IDF or for PSRAM on WROVER
           // For standard Arduino, `new` or `malloc` is generally used.
@@ -157,7 +163,7 @@ void loop() {
           http.getStream().readBytes((uint8_t*)imageBuffer, imageSize);
           //Serial.println("Image successfully read into buffer");
 
-          // Call display method
+          // Call jpeg decode method
           grabImage();
         }
       }
@@ -166,43 +172,40 @@ void loop() {
     }
 
     // Do stuff with bmp buffer
-    //Serial.print("Pixel value at index 51360: ");
-    //Serial.println(bmpBuffer[51360]);
-
-    // TEST
-    tft.setAddrWindow(0, 0, 320, 320);
-    tft.pushPixels(bmpBuffer, BMP_SIZE);
-    // for (size_t i = 0; i < BMP_SIZE; i++) {
-    // Serial.print(bmpBuffer[i], HEX); // Prints each byte as a hexadecimal value
-    // //Serial.print(" ");           // Adds a space for readability
-    // }
-    // Serial.println();  
-
-    // Free memory
-
-    free(imageBuffer); 
-    imageBuffer = NULL;
+    //-------------- TO DO HERE --------------------------------
+    // Take average of all pixels (maybe grab this at for loop during decode)
+    // Iterate through buffer doing bool compare. Above = white, else black
+    // OR, swap red and blue. Let's try that first.
     
 
-    http.end();
+    // Display from bmp buffer
+    tft.setAddrWindow(0, 0, jpeg.getWidth(), jpeg.getHeight());
+    tft.pushPixels(bmpBuffer, jpeg.getWidth()*jpeg.getHeight());
 
-    //while(1);
+    // Free memory
+    free(imageBuffer); 
+    imageBuffer = NULL;
+    // Keep bmp buffer allocated in PSRAM
+
+    http.end();
   }
 }
 
 void grabImage(){
+  // Open image
   if (jpeg.openRAM((uint8_t*)imageBuffer, imageSize, drawMCUs)){
     //Serial.println("Successfully opened JPEG image");
     //Serial.printf("Image size: %d x %d, orientation: %d, bpp: %d\n", jpeg.getWidth(),
       //jpeg.getHeight(), jpeg.getOrientation(), jpeg.getBpp());
+
     jpeg.setPixelType(RGB565_BIG_ENDIAN); // The SPI LCD wants the 16-bit pixels in little-endian order  
     
     bmpSize = jpeg.getHeight()*jpeg.getWidth();
     //Serial.print("Bitmap Size: ");
       //Serial.println(bmpSize);
     
-
-    jpeg.decode(0,0,0);
+    // Call decode method from library
+    jpeg.decode(0,0,0); // triggers callback "drawMCUs" multiple times, once for each decoded chunk
     jpeg.close();
   }
   else{
