@@ -6,6 +6,7 @@
 #include <TJpg_Decoder.h>
 #include "pins_arduino.h"
 #include <TFT_eSPI.h> // Hardware-specific library. MUST ADJUST user settings file in library
+#include "SPIFFS.h"
 
 
 
@@ -41,6 +42,10 @@ uint16_t rawHeight = 0;
 const size_t BMP_SIZE = 153600; // sized for 320*480 bmp
 uint16_t *bmpBuffer; 
 size_t bmpSize = 0;
+uint64_t sum = 0;
+uint64_t xSum = 0;
+uint64_t ySum = 0;
+uint64_t numberTargets = 0;
 
 
 
@@ -64,7 +69,7 @@ void setup() {
 
   // Start screen
   tft.init();
-  tft.setRotation(1);
+  tft.setRotation(3);
 
   // The jpeg image can be scaled by a factor of 1, 2, 4, or 8
   TJpgDec.setJpgScale(1);
@@ -78,7 +83,7 @@ void setup() {
   for (uint8_t t = 4; t > 0; t--) {
     Serial.printf("[SETUP] WAIT %d...\n", t);
     Serial.flush();
-    delay(1000);
+    delay(200);
   }
 
   wifiMulti.addAP("ESP32-CAM", "password");
@@ -87,8 +92,8 @@ void setup() {
   tft.setCursor(46, 0);
   tft.setTextSize(3);
   //tft.setFont(FONT_12x16);
-  tft.setTextColor(TFT_GREEN);
-  tft.print("JPEG Test");
+  tft.setTextColor(TFT_RED);
+  tft.print("Dot Finder V1.0");
 }
 
 
@@ -141,23 +146,70 @@ void loop() {
     //-------------- TO DO HERE --------------------------------
     // Take average of all pixels (maybe grab this at for loop during decode)
     // Iterate through buffer doing bool compare. Above = white, else black
-    Serial.println(bmpBuffer[51200], HEX);
-    // for(int i = 0; i<rawWidth*rawHeight; i++){
-    //   //bmpBuffer[i] = RGB565toRBG565(bmpBuffer[i]);
-    //   bmpBuffer[i] = RGB565toBGR565(bmpBuffer[i]);
-    // }
+    //bin16print(bmpBuffer[51200]);
+
+    // Bit order and endian-ness test
+    //uint16_t test_bits = 1;
+    // for(int i = 0; i<(rawWidth*rawHeight); i++){
+    //   bmpBuffer[i] = leftRotate(test_bits, i/6400);
+    //   if (i%320 == 0){bmpBuffer[i] = 0b1111111111111111;}
+    //   if (i%6400 == 0){bmpBuffer[i] = 0b0000000000000000;}
+    //   if (i < 100){bmpBuffer[i] = 0b0000000010000000;}
+    //   //bin16print(bmpBuffer[i]);
+    // }//--------------0b0000000000000000;
+
+    //Binary Thresholding
+    long average = sum/102400;
     
+    // Serial.print(sum);
+    // Serial.print(", ");
+    // Serial.println(average);
+    for(int i = 0; i<rawWidth*rawHeight; i++){
+      if(getGreen(bmpBuffer[i])>(average/2)){
+        
+      }
+      else{
+        bmpBuffer[i] = 0b1110000000000111;
+        // Calculate coordinates
+        xSum += i % rawWidth;
+        ySum += i / rawWidth;
+        numberTargets++;
+      }
+    }
 
     // Display from bmp buffer
     tft.pushImage(0, 0, rawWidth, rawHeight, bmpBuffer);
-
+    tft.setCursor(23, 23);
+    if(numberTargets>0){
+      Serial.print(xSum/numberTargets);
+      Serial.print(", ");
+      Serial.println(ySum/numberTargets);
+      //Serial.print("Number Targets: ");
+      //Serial.println(numberTargets);
+      tft.print(xSum/numberTargets);
+      tft.print(", ");
+      tft.print(ySum/numberTargets);
+      tft.drawCircle((int32_t)xSum/numberTargets, (int32_t)ySum/numberTargets, 10, TFT_RED);
+      }
+    else{
+      tft.print("NA");
+    }
+  
     // Free memory
     free(imageBuffer); 
     imageBuffer = NULL;
+    sum = 0;
+    numberTargets = 0;
+    xSum = 0;
+    ySum = 0;
+
     // Keep bmp buffer allocated in PSRAM
 
     http.end();
+
+    //while(true);
   }
+
 }
 
 
@@ -198,7 +250,68 @@ void writeToBuffer(uint16_t *pixels, int x, int y, int width, int height){
       index += skipSize+1; // Skip!
       skipIndex = 0; // Reset chunk row index (as we're starting a new row of the chunk)
     }
+
+    // Do single channel conversion to take average
+    sum += getGreen(pixels[i]);
   }
 }
+
+
+void bin16print(uint16_t value) {
+  for (int i = 15; i >= 0; i--) { // Loop from the most significant bit (15) down to 0
+    // Use bitRead() to check the value of each bit
+    Serial.print(bitRead(value, i));
+    if (i==5 || i == 11){
+      Serial.print(" ");
+    }
+  }
+  Serial.println(" ");
+  Serial.println(value, HEX);
+}
+
+
+uint16_t leftRotate(uint16_t bits, uint8_t positions) {
+    // Left shift the number and OR it with the bits shifted in from the right
+    return (bits << positions) | (bits >> (16 - positions)); 
+}
+
+
+uint8_t rgb565_to_grayscale(uint16_t color) {
+  // Extract the components from the 16-bit RGB565 value
+  // R component (5 bits)
+  uint8_t r = getRed(color);
+  // G component (6 bits)
+  uint8_t g = getGreen(color);
+  // B component (5 bits)
+  uint8_t b = getBlue(color);
+
+  // Scale the 5-bit R and B components and 6-bit G component to an 8-bit range (0-255)
+  // This is a simplified scaling, more precise scaling can be used, but this is a good starting point
+  uint8_t r8 = (r * 527 + 23) >> 6; // ~255/31
+  uint8_t g8 = (g * 259 + 33) >> 6; // ~255/63
+  uint8_t b8 = (b * 527 + 23) >> 6; // ~255/31
+
+  // Apply a weighted average (luma) formula to get the grayscale value (0-255)
+  // Using integer math with coefficients scaled to 1000 for precision
+  uint16_t gray = (r8 * 212 + g8 * 715 + b8 * 72) / 1000;
+  
+  return (uint8_t)gray;
+}
+
+uint8_t getRed(uint16_t color){
+  uint8_t r = (color >> 3) & 0b0000000000011111;
+  return r;
+}
+
+uint8_t getGreen(uint16_t color){
+  uint8_t g = (leftRotate(color, 3)) & 0b0000000000111111;
+  return g;
+}
+
+uint8_t getBlue(uint16_t color){
+  uint8_t b = (color >> 8) & 0b0000000000011111;
+  return b;
+}
+
 
 
